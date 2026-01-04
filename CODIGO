@@ -1,0 +1,103 @@
+# 1. Instalar las librerías necesarias (ejecutar primero)
+!pip install geopandas shapely matplotlib
+
+# 2. Importar las librerías
+import geopandas as gpd
+from shapely.affinity import translate, scale
+import matplotlib.pyplot as plt
+import numpy as np
+
+# 3. Cargar archivo original
+manzanas = gpd.read_file('/content/Manzanas de Toluca_CENSO2020.shp')
+
+# 4. Proyectar a sistema métrico (si es necesario)
+manzanas = manzanas.to_crs(epsg=32614)
+
+# 5. Calcular área y ordenar de mayor a menor
+manzanas["area"] = manzanas.geometry.area
+manzanas = manzanas.sort_values("area", ascending=False).reset_index(drop=True)
+
+# 6. Configurar la cuadrícula
+columnas = 40  # número de columnas en la cuadrícula
+filas = int(np.ceil(len(manzanas) / columnas))
+
+# 7. Calcular el factor de escala basado en el área más grande
+area_maxima = manzanas["area"].max()
+tamaño_celda_max = 100  # tamaño máximo para la manzana más grande
+espaciado = 15  # espacio entre polígonos
+
+# Calcular el factor de escala base usando la raíz cuadrada del área
+# (porque el área es proporcional al cuadrado de la escala lineal)
+factor_base = tamaño_celda_max / np.sqrt(area_maxima)
+
+nuevas_geometrías = []
+
+for i, (idx, row) in enumerate(manzanas.iterrows()):
+    geom = row.geometry
+    area = row.area
+
+    # Calcular posición en la cuadrícula
+    col = i % columnas
+    fila = i // columnas
+
+    # Calcular el factor de escala proporcional al área
+    # Usar la raíz cuadrada para mantener las proporciones de área
+    factor_escala = factor_base * np.sqrt(area / area_maxima)
+
+    # Escalar el polígono manteniendo las proporciones
+    geom_escalado = scale(geom, xfact=factor_escala, yfact=factor_escala, origin='centroid')
+
+    # Calcular posición de destino (centro de cada celda)
+    x_destino = col * (tamaño_celda_max + espaciado) + tamaño_celda_max/2
+    y_destino = -fila * (tamaño_celda_max + espaciado) - tamaño_celda_max/2
+
+    # Obtener el centro del polígono escalado
+    minx_esc, miny_esc, maxx_esc, maxy_esc = geom_escalado.bounds
+    centro_x = (minx_esc + maxx_esc) / 2
+    centro_y = (miny_esc + maxy_esc) / 2
+
+    # Trasladar para centrar en la celda
+    x_offset = x_destino - centro_x
+    y_offset = y_destino - centro_y
+
+    geom_final = translate(geom_escalado, xoff=x_offset, yoff=y_offset)
+    nuevas_geometrías.append(geom_final)
+
+# 8. Actualizar geometrías
+manzanas_viz = manzanas.copy()
+manzanas_viz["geometry"] = nuevas_geometrías
+
+# 9. Crear la visualización
+fig, ax = plt.subplots(1, 1, figsize=(20, filas * 2))
+
+# Plotear manteniendo las proporciones reales
+manzanas_viz.plot(ax=ax,
+                  edgecolor="black",
+                  facecolor="lightblue",
+                  linewidth=0.5,
+                  alpha=0.8)
+
+# Configurar el plot
+ax.set_xlim(-espaciado, columnas * (tamaño_celda_max + espaciado))
+ax.set_ylim(-filas * (tamaño_celda_max + espaciado), tamaño_celda_max)
+ax.set_aspect('equal')
+ax.axis('off')
+
+plt.title(f"Manzanas de Toluca ordenadas por área (proporciones reales)\n({len(manzanas)} manzanas - La más grande tiene {area_maxima:.0f} m²)",
+          fontsize=16, pad=20)
+plt.tight_layout()
+plt.show()
+
+# 10. Información adicional
+print(f"Total de manzanas: {len(manzanas)}")
+print(f"Organizadas en {filas} filas y {columnas} columnas")
+print(f"Área más grande: {manzanas['area'].max():.2f} m²")
+print(f"Área más pequeña: {manzanas['area'].min():.2f} m²")
+print(f"Proporción área más grande vs más pequeña: {manzanas['area'].max() / manzanas['area'].min():.1f}:1")
+print(f"Área promedio: {manzanas['area'].mean():.2f} m²")
+
+# 11. Opcional: Mostrar estadísticas de tamaños
+print(f"\nDistribución de tamaños:")
+print(f"- Más grandes (top 10%): {manzanas['area'].quantile(0.9):.2f} m² o más")
+print(f"- Medianas (10%-90%): {manzanas['area'].quantile(0.1):.2f} - {manzanas['area'].quantile(0.9):.2f} m²")
+print(f"- Más pequeñas (bottom 10%): {manzanas['area'].quantile(0.1):.2f} m² o menos")
